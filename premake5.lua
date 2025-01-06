@@ -3,11 +3,11 @@ project "GLFW"
     language "C"
     staticruntime "On"
 
-	targetdir ("%{wks.location}/bin/" .. OutputDir .. "/%{prj.name}")
-	objdir ("%{wks.location}/bin-int/" .. OutputDir .. "/%{prj.name}")
+    targetdir ("%{wks.location}/bin/" .. OutputDir .. "/%{prj.name}")
+    objdir ("%{wks.location}/bin-int/" .. OutputDir .. "/%{prj.name}")
 
-	files
-	{
+    files
+    {
         "include/GLFW/glfw3.h",
         "include/GLFW/glfw3native.h",
         "src/glfw_config.h",
@@ -26,13 +26,13 @@ project "GLFW"
         "src/null_platform.h",
         "src/null_joystick.h",
         "src/null_init.c",
-    
+
         "src/null_monitor.c",
         "src/null_window.c",
         "src/null_joystick.c",
     }
 
-	filter "system:windows"
+    filter "system:windows"
         systemversion "latest"
         staticruntime "On"
 
@@ -59,29 +59,29 @@ project "GLFW"
         }
 
     filter "system:linux"
-		pic "On"
+        pic "On"
 
-		systemversion "latest"
-		staticruntime "On"
+        systemversion "latest"
+        staticruntime "On"
 
-		files
-		{
-			"src/x11_init.c",
-			"src/x11_monitor.c",
-			"src/x11_window.c",
-			"src/xkb_unicode.c",
-			"src/posix_time.c",
-			"src/posix_thread.c",
-			"src/glx_context.c",
-			"src/egl_context.c",
-			"src/osmesa_context.c",
-			"src/linux_joystick.c"
-		}
+        files
+        {
+            "src/x11_init.c",
+            "src/x11_monitor.c",
+            "src/x11_window.c",
+            "src/xkb_unicode.c",
+            "src/posix_time.c",
+            "src/posix_thread.c",
+            "src/glx_context.c",
+            "src/egl_context.c",
+            "src/osmesa_context.c",
+            "src/linux_joystick.c"
+        }
 
-		defines
-		{
-			"_GLFW_X11"
-		}
+        defines
+        {
+            "_GLFW_X11"
+        }
 
     filter "configurations:Debug"
         runtime "Debug"
