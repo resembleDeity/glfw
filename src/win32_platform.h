@@ -70,6 +70,10 @@
 #include <dinput.h>
 #include <xinput.h>
 #include <dbt.h>
+// OLE drag-and-drop (IDropTarget/IDropSource/IDataObject) and the drag-image helper
+// (IDragSourceHelper), used by win32_dnd.c to implement glfwStartDragDrop natively.
+#include <ole2.h>
+#include <shlobj.h>
 
 // HACK: Define macros that some windows.h variants don't
 #ifndef WM_COPYGLOBALDATA
@@ -377,7 +381,20 @@ typedef struct _GLFWwindowWin32
     WCHAR               highSurrogate;
     // Last WM_NCHITTEST result, or 0 if never hit-tested.
     int                 lastHitTest;
+    // OLE drop destination registered for this window (see win32_dnd.c). Lets a native
+    // drag started by glfwStartDragDrop hit-test across the app's own windows.
+    IDropTarget*        dropTarget;
 } _GLFWwindowWin32;
+
+// One payload format a native drag session offers foreign applications (see win32_dnd.c).
+// The bytes are already in the exact shape the clipboard format transfers, rendered once when
+// the payload was set, so handing them to a drop target is a plain copy.
+typedef struct _GLFWdragpayloadWin32
+{
+    UINT                format;
+    void*               bytes;
+    size_t              size;
+} _GLFWdragpayloadWin32;
 
 // Win32-specific global data
 //
@@ -444,6 +461,24 @@ typedef struct _GLFWlibraryWin32
         HINSTANCE                       instance;
         PFN_RtlVerifyVersionInfo        RtlVerifyVersionInfo_;
     } ntdll;
+
+    // Native drag-and-drop session (see win32_dnd.c). One at a time, matching the Cocoa/Wayland
+    // backends. Unlike those, DoDragDrop runs a blocking modal loop, so the session is armed by
+    // startDragDrop (pending) and actually entered from the window procedure on the next mouse
+    // message -- between frames -- so it never re-enters the caller's in-progress render frame.
+    struct {
+        _GLFWwindow*        window;         // originator that called startDragDrop
+        char*               type;           // owned copy; reported back verbatim to the callback
+        GLFWbool            pending;        // armed, DoDragDrop not entered yet
+        GLFWbool            active;         // inside DoDragDrop's modal loop
+        GLFWbool            dropReceived;   // a real DROP landed on one of our windows
+        _GLFWwindow*        hoverWindow;    // window currently under the drag, for enter/leave
+        // Formats offered to foreign applications, empty unless setDragDropPayload was called.
+        // A session with none is private to this process, which is what lets a release over a
+        // foreign window end as a cancel instead of a drop that window could never have used.
+        _GLFWdragpayloadWin32* payloads;
+        int                 payloadCount;
+    } dragDropSession;
 } _GLFWlibraryWin32;
 
 // Win32-specific per-monitor data
@@ -505,6 +540,21 @@ void _glfwHideWindowWin32(_GLFWwindow* window);
 void _glfwRequestWindowAttentionWin32(_GLFWwindow* window);
 void _glfwFocusWindowWin32(_GLFWwindow* window);
 void _glfwDragWindowWin32(_GLFWwindow* window);
+GLFWbool _glfwStartDragDropWin32(_GLFWwindow* window, const char* type);
+GLFWbool _glfwSetDragDropIconWin32(_GLFWwindow* window, const GLFWimage* image, int xhot, int yhot);
+GLFWbool _glfwSetDragDropPayloadWin32(_GLFWwindow* window, const char* mime,
+                                      const void* data, size_t size);
+// Registers/removes the OLE drop destination for a window (called at create/destroy).
+void _glfwRegisterDropTargetWin32(_GLFWwindow* window);
+void _glfwRevokeDropTargetWin32(_GLFWwindow* window);
+// Enters the deferred DoDragDrop loop if a session is pending. Called from the window
+// procedure on a mouse message so the modal loop runs between frames, not mid-render.
+void _glfwEnterPendingDragDropWin32(_GLFWwindow* window);
+// Discards a session armed by startDragDrop that was never entered (button released first).
+void _glfwCancelPendingDragDropWin32(_GLFWwindow* window);
+// OLE init/teardown, paired with _glfwInitWin32 / _glfwTerminateWin32.
+GLFWbool _glfwInitDragDropWin32(void);
+void _glfwTerminateDragDropWin32(void);
 void _glfwSetWindowMonitorWin32(_GLFWwindow* window, _GLFWmonitor* monitor, int xpos, int ypos, int width, int height, int refreshRate);
 GLFWbool _glfwWindowFocusedWin32(_GLFWwindow* window);
 GLFWbool _glfwWindowIconifiedWin32(_GLFWwindow* window);

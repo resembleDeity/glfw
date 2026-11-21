@@ -336,6 +336,34 @@ extern "C" {
  *  @ingroup input
  */
 #define GLFW_PRESS                  1
+/*! @brief Phases of an in-process drag-and-drop session started by
+ *  @ref glfwStartDragDrop, reported per-window via @ref GLFWdragdropfun.
+ *
+ *  Routed through the OS's own native drag-and-drop mechanism instead of
+ *  ordinary mouse events, which on some platforms (Wayland's implicit
+ *  pointer grab) never reach any window but the one the gesture started in.
+ *  These fire correctly for whichever of the application's own windows the
+ *  cursor is actually over, even mid-drag. See @ref glfwStartDragDrop.
+ *
+ *  @ingroup input
+ */
+#define GLFW_DRAGDROP_ENTER         0
+#define GLFW_DRAGDROP_MOTION        1
+#define GLFW_DRAGDROP_LEAVE         2
+#define GLFW_DRAGDROP_DROP          3
+/*! @brief How a drag-and-drop session started by @ref glfwStartDragDrop
+ *  ended, reported via @ref GLFWdragendfun.
+ *
+ *  A session that offers an external payload (@ref glfwSetDragDropPayload)
+ *  can also be accepted by a foreign application, which is neither a drop on
+ *  one of this application's own windows nor a cancellation. A session
+ *  without one can only ever end in the other two.
+ *
+ *  @ingroup input
+ */
+#define GLFW_DRAGDROP_CANCELLED     0
+#define GLFW_DRAGDROP_CONSUMED      1
+#define GLFW_DRAGDROP_CONSUMED_EXTERNALLY 2
 /*! @brief The key was held down until it repeated.
  *
  *  The key was held down until it repeated.
@@ -1280,6 +1308,20 @@ extern "C" {
  *  cursor themes.
  */
 #define GLFW_NOT_ALLOWED_CURSOR     0x0003600A
+/*! @brief The grab (open hand) shape.
+ *
+ *  The open-hand shape shown while a draggable surface can be grabbed to pan it.
+ *
+ *  @note __Windows:__ No system grab cursor exists; the move (all-directions) shape is used.
+ */
+#define GLFW_GRAB_CURSOR            0x0003600B
+/*! @brief The grabbing (closed hand) shape.
+ *
+ *  The closed-hand shape shown while a grabbed surface is being dragged to pan it.
+ *
+ *  @note __Windows:__ No system grabbing cursor exists; the move (all-directions) shape is used.
+ */
+#define GLFW_GRABBING_CURSOR       0x0003600C
 /*! @brief Legacy name for compatibility.
  *
  *  This is an alias for compatibility with earlier versions.
@@ -1997,6 +2039,39 @@ typedef void (* GLFWcharmodsfun)(GLFWwindow* window, unsigned int codepoint, int
  *  @ingroup input
  */
 typedef void (* GLFWdropfun)(GLFWwindow* window, int path_count, const char* paths[]);
+
+/*! @brief The function pointer type for drag-and-drop hover callbacks.
+ *
+ *  Fires on whichever window a @ref glfwStartDragDrop session is currently
+ *  over, with a `GLFW_DRAGDROP_*` phase, the cursor's position in that
+ *  window's own content area for ENTER/MOTION/DROP (screen coordinates, same
+ *  convention as @ref glfwSetCursorPosCallback; LEAVE carries no meaningful
+ *  position), and the `type` string the session was started with.
+ *
+ *  @sa @ref glfwSetDragDropCallback
+ *  @sa @ref glfwStartDragDrop
+ *
+ *  @ingroup input
+ */
+typedef void (* GLFWdragdropfun)(GLFWwindow* window, int phase, double xpos, double ypos, const char* type);
+
+/*! @brief The function pointer type for drag-and-drop end callbacks.
+ *
+ *  Fires once, on the window that called @ref glfwStartDragDrop, when that
+ *  session concludes. `result` is one of @ref GLFW_DRAGDROP_CONSUMED (the
+ *  drag landed on one of this application's own windows, a real drop per
+ *  @ref GLFW_DRAGDROP_DROP just before this), @ref
+ *  GLFW_DRAGDROP_CONSUMED_EXTERNALLY (a foreign application accepted the
+ *  payload, possible only for a session that offered one, see @ref
+ *  glfwSetDragDropPayload), or @ref GLFW_DRAGDROP_CANCELLED (released
+ *  outside every window, refused, or cancelled).
+ *
+ *  @sa @ref glfwSetDragEndCallback
+ *  @sa @ref glfwStartDragDrop
+ *
+ *  @ingroup input
+ */
+typedef void (* GLFWdragendfun)(GLFWwindow* window, int result);
 
 /*! @brief The function pointer type for monitor configuration callbacks.
  *
@@ -4011,12 +4086,17 @@ GLFWAPI void glfwFocusWindow(GLFWwindow* window);
  *  into a new viewport) and should seamlessly follow the cursor as if the
  *  initial button press had been on this new window.
  *
- *  Requires a pointer button to currently be held. On Wayland this issues
- *  xdg_toplevel.move (or libdecor_frame_move) using the latest user-event
- *  serial. On Win32 it issues ReleaseCapture + WM_SYSCOMMAND SC_MOVE. On
- *  X11 it sends a _NET_WM_MOVERESIZE ClientMessage. All of these use the
- *  cursor's current location to anchor the drag, so no position needs to
- *  be passed in.
+ *  Requires a pointer button to currently be held. On Win32 and X11 this is
+ *  a no-op: their own implicit pointer capture already lets a caller drive
+ *  the drag itself via glfwSetWindowPos, and actually handing off to the
+ *  window manager there (ReleaseCapture + WM_SYSCOMMAND SC_MOVE on Win32, a
+ *  _NET_WM_MOVERESIZE ClientMessage on X11) would swallow the release and
+ *  break a caller that needs to see it (e.g. drop-target hit-testing). On
+ *  Wayland this issues plain xdg_toplevel.move (or libdecor_frame_move)
+ *  using the latest user-event serial and synthesizes the release it
+ *  swallows, since nothing else will ever see a real one once the window
+ *  manager has taken over the pointer. Uses the cursor's current location to
+ *  anchor the drag, so no position needs to be passed in.
  *
  *  @param[in] window The window to move.
  *
@@ -4028,6 +4108,142 @@ GLFWAPI void glfwFocusWindow(GLFWwindow* window);
  *  @ingroup window
  */
 GLFWAPI void glfwDragWindow(GLFWwindow* window);
+
+/*! @brief Starts an in-process drag-and-drop session for hit-testing across
+ *  this application's own windows.
+ *
+ *  Delegates to the OS's own native cross-window drag-and-drop mechanism --
+ *  Wayland's `wl_data_device`, the XDND protocol on X11, and analogously OLE
+ *  drag-and-drop on Windows or `NSDraggingSession` on macOS where
+ *  implemented -- so the OS itself, which
+ *  knows real screen geometry unlike this client on every platform, routes
+ *  @ref GLFWdragdropfun events to whichever of this application's own windows
+ *  the cursor is actually over for the rest of the gesture, and @ref
+ *  GLFWdragendfun once it concludes. No payload is transferred; this is
+ *  purely for correct routing, alongside whatever payload mechanism the
+ *  caller already uses (e.g. Dear ImGui's own drag-and-drop payload).
+ *
+ *  `type` identifies this session to @ref GLFWdragdropfun and distinguishes
+ *  it from an unrelated drag (this application's own or a foreign one) a
+ *  window might otherwise see mid-gesture. Treat it like a registered
+ *  clipboard format name or pasteboard type: any string this application
+ *  chooses, just unlikely to collide with one a foreign application might
+ *  offer.
+ *
+ *  Requires a pointer button to currently be held, same as @ref
+ *  glfwDragWindow. Returns `GLFW_FALSE` without starting anything on
+ *  platforms that don't need this (their own window/cursor positions are
+ *  always accurate, so ordinary position-based hit-testing already works),
+ *  where it isn't yet implemented, or if a session couldn't be started.
+ *
+ *  @param[in] window The window the drag originates from.
+ *  @param[in] type The identifier this session's events will carry; see
+ *  above.
+ *  @return `GLFW_TRUE` if a session was started, `GLFW_FALSE` otherwise.
+ *
+ *  @errors Possible errors include @ref GLFW_NOT_INITIALIZED.
+ *
+ *  @thread_safety This function must only be called from the main thread.
+ *
+ *  @ingroup window
+ */
+GLFWAPI int glfwStartDragDrop(GLFWwindow* window, const char* type);
+
+/*! @brief Sets the icon shown attached to the cursor for an active @ref
+ *  glfwStartDragDrop session.
+ *
+ *  Where implemented, this hands the image to the OS's own drag-and-drop
+ *  mechanism (the same one @ref glfwStartDragDrop delegates to), so it is
+ *  drawn and positioned by the OS itself -- following the cursor correctly
+ *  even outside every one of this application's own windows, unlike
+ *  anything the application could draw itself. Analogous to
+ *  IDragSourceHelper's image on Windows or NSDraggingItem's image on macOS
+ *  where implemented.
+ *
+ *  Safe to call more than once during the same session (e.g. once the
+ *  application finishes rendering the image it wants to show); each call
+ *  replaces whatever the OS is currently showing. No effect, and returns
+ *  `GLFW_FALSE`, if no @ref glfwStartDragDrop session is currently active
+ *  for `window`, or where unimplemented.
+ *
+ *  @param[in] window The window that called @ref glfwStartDragDrop.
+ *  @param[in] image The image to use, in 8-bit RGBA, premultiplied on
+ *  upload by the platform layer -- the application need not premultiply it.
+ *  @param[in] xhot The X-coordinate, in image pixels, of where within the
+ *  image the cursor hotspot should appear.
+ *  @param[in] yhot The Y-coordinate, in image pixels, of where within the
+ *  image the cursor hotspot should appear.
+ *  @return `GLFW_TRUE` if the icon was set, `GLFW_FALSE` otherwise.
+ *
+ *  @pointer_lifetime The specified image data is copied before this
+ *  function returns.
+ *
+ *  @errors Possible errors include @ref GLFW_NOT_INITIALIZED.
+ *
+ *  @thread_safety This function must only be called from the main thread.
+ *
+ *  @ingroup window
+ */
+GLFWAPI int glfwSetDragDropIcon(GLFWwindow* window, const GLFWimage* image, int xhot, int yhot);
+
+/*! @brief Offers a payload to foreign applications for an armed @ref
+ *  glfwStartDragDrop session.
+ *
+ *  By default a session is private to this application: it transfers no
+ *  data, so no other application can accept it, and the platform layer is
+ *  free to refuse a release over a foreign window outright rather than hand
+ *  that application a drop it cannot use (which on Windows also raises it).
+ *  Calling this makes the session a real inter-application drag as well,
+ *  carrying `mime` alongside the private marker that routes it between this
+ *  application's own windows. Routing between those windows is unaffected;
+ *  they identify the session by the `type` given to @ref glfwStartDragDrop
+ *  exactly as before.
+ *
+ *  Call once per format, before the session reaches the OS, which in
+ *  practice means the same frame as @ref glfwStartDragDrop, alongside @ref
+ *  glfwSetDragDropIcon. Offering the same `mime` twice replaces the first.
+ *
+ *  `mime` is a MIME type and `data` must be that type's own wire form, which
+ *  the platform layer translates into whatever the OS's own drag-and-drop
+ *  mechanism transfers. Two are given that treatment:
+ *
+ *  - `text/uri-list`: RFC 2483 URI list, UTF-8, one URI per line, `#`
+ *    comment lines ignored. `file:` URIs become a native file drag (Windows
+ *    `CF_HDROP`), which is what a file manager or editor expects to receive.
+ *  - `text/plain;charset=utf-8` (or `text/plain`): UTF-8 text, transferred
+ *    as the platform's own text flavour (Windows `CF_UNICODETEXT`).
+ *
+ *  Any other `mime` is registered with the OS under that exact name and its
+ *  bytes transferred verbatim, for an application-specific format a
+ *  cooperating application already knows how to read.
+ *
+ *  Because a foreign application can now accept the drag, @ref
+ *  GLFWdragendfun can report @ref GLFW_DRAGDROP_CONSUMED_EXTERNALLY, which a
+ *  caller that treats "not consumed" as "landed nowhere" has to handle.
+ *
+ *  A drop one of this application's own windows receives still carries no
+ *  payload; they share an address space with whatever put the drag together.
+ *
+ *  @param[in] window The window that armed the session.
+ *  @param[in] mime The MIME type of `data`; see above.
+ *  @param[in] data The payload bytes.
+ *  @param[in] size The number of bytes in `data`.
+ *  @return `GLFW_TRUE` if the payload was accepted, `GLFW_FALSE` if there is
+ *  no armed session on this window, if it has already reached the OS, if
+ *  `data` is malformed for `mime`, or on platforms where this isn't
+ *  implemented.
+ *
+ *  @pointer_lifetime The specified data is copied before this function
+ *  returns.
+ *
+ *  @errors Possible errors include @ref GLFW_NOT_INITIALIZED.
+ *
+ *  @thread_safety This function must only be called from the main thread.
+ *
+ *  @ingroup window
+ */
+GLFWAPI int glfwSetDragDropPayload(GLFWwindow* window, const char* mime,
+                                   const void* data, size_t size);
 
 /*! @brief Requests user attention to the specified window.
  *
@@ -5557,6 +5773,44 @@ GLFWAPI GLFWscrollfun glfwSetScrollCallback(GLFWwindow* window, GLFWscrollfun ca
  *  @ingroup input
  */
 GLFWAPI GLFWdropfun glfwSetDropCallback(GLFWwindow* window, GLFWdropfun callback);
+
+/*! @brief Sets the drag-and-drop hover callback for a @ref glfwStartDragDrop
+ *  session.
+ *
+ *  @param[in] window The window whose callback to set.
+ *  @param[in] callback The new callback, or `NULL` to remove the currently
+ *  set callback.
+ *  @return The previously set callback, or `NULL` if no callback was set or
+ *  the library had not been [initialized](@ref intro_init).
+ *
+ *  @errors Possible errors include @ref GLFW_NOT_INITIALIZED.
+ *
+ *  @thread_safety This function must only be called from the main thread.
+ *
+ *  @sa @ref glfwStartDragDrop
+ *
+ *  @ingroup input
+ */
+GLFWAPI GLFWdragdropfun glfwSetDragDropCallback(GLFWwindow* window, GLFWdragdropfun callback);
+
+/*! @brief Sets the drag-and-drop end callback for a @ref glfwStartDragDrop
+ *  session.
+ *
+ *  @param[in] window The window whose callback to set.
+ *  @param[in] callback The new callback, or `NULL` to remove the currently
+ *  set callback.
+ *  @return The previously set callback, or `NULL` if no callback was set or
+ *  the library had not been [initialized](@ref intro_init).
+ *
+ *  @errors Possible errors include @ref GLFW_NOT_INITIALIZED.
+ *
+ *  @thread_safety This function must only be called from the main thread.
+ *
+ *  @sa @ref glfwStartDragDrop
+ *
+ *  @ingroup input
+ */
+GLFWAPI GLFWdragendfun glfwSetDragEndCallback(GLFWwindow* window, GLFWdragendfun callback);
 
 /*! @brief Returns whether the specified joystick is present.
  *

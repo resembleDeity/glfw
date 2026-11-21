@@ -358,6 +358,8 @@ typedef struct _GLFWofferWayland
     GLFWbool                    text_uri_list;
     // Set when the offer advertises our toplevel-drag marker mime.
     GLFWbool                    glfw_window_drag;
+    // Set when the offer advertises glfwStartDragDrop's own marker mime.
+    GLFWbool                    dragdrop;
 } _GLFWofferWayland;
 
 typedef struct _GLFWscaleWayland
@@ -513,6 +515,36 @@ typedef struct _GLFWlibraryWayland
         int                             offsetX, offsetY;
     } toplevelDragSession;
 
+    // Active glfwStartDragDrop session. Unlike toplevelDragSession, carries no
+    // xdg_toplevel_drag_v1 attachment -- this never moves a window, only rides
+    // wl_data_device's own enter/motion/leave/drop routing (see
+    // _glfwStartDragDropWayland's own comment).
+    struct {
+        struct wl_data_source*          source;
+        _GLFWwindow*                    window;
+        // Owned copy of the type string glfwStartDragDrop was called with --
+        // what dataOfferHandleOffer/dataDeviceHandleEnter match an offer's own
+        // mime type against, and what's reported back through GLFWdragdropfun.
+        char*                            type;
+        // Created empty alongside `source`, passed as start_drag's own icon
+        // surface so glfwSetDragDropIcon can attach a real buffer to it
+        // later, once the application has one ready -- see that function's
+        // own comment for why content isn't required up front.
+        struct wl_surface*              iconSurface;
+        struct wl_buffer*                iconBuffer;
+        // Only non-NULL when the compositor supports wp_viewporter. Created alongside
+        // `iconSurface` -- see glfwSetDragDropIcon's own comment for why it's needed.
+        struct wp_viewport*              iconViewport;
+        // Set the moment dataDeviceHandleDrop actually fires GLFW_DRAGDROP_DROP -- see
+        // endDragDropSession's own comment for why that's trusted over dnd_drop_performed.
+        GLFWbool                         dropReceived;
+    } dragDropSession;
+
+    // wl_data_device.drop carries no position of its own -- the last position
+    // from a preceding wl_data_device.motion on the current dragFocus, reused
+    // for the DROP event fired from dataDeviceHandleDrop.
+    double                      dragLastX, dragLastY;
+
     const char*                 tag;
 
     struct wl_surface*          pointerSurface;
@@ -554,6 +586,10 @@ typedef struct _GLFWlibraryWayland
         int                     button;
         int                     action;
         uint32_t                buttonTime;
+        // Captured at event time, not re-derived in `pointerHandleFrame`: `pointerButtonsDown`
+        // is already decremented by then for a release, so a fresh call there would
+        // wrongly read "no grab" for the last button released.
+        struct wl_surface*      buttonSurface;
     } pending;
 
     struct {
@@ -732,6 +768,8 @@ void _glfwHideWindowWayland(_GLFWwindow* window);
 void _glfwRequestWindowAttentionWayland(_GLFWwindow* window);
 void _glfwFocusWindowWayland(_GLFWwindow* window);
 void _glfwDragWindowWayland(_GLFWwindow* window);
+GLFWbool _glfwStartDragDropWayland(_GLFWwindow* window, const char* type);
+GLFWbool _glfwSetDragDropIconWayland(_GLFWwindow* window, const GLFWimage* image, int xhot, int yhot);
 void _glfwSetWindowMonitorWayland(_GLFWwindow* window, _GLFWmonitor* monitor, int xpos, int ypos, int width, int height, int refreshRate);
 GLFWbool _glfwWindowFocusedWayland(_GLFWwindow* window);
 GLFWbool _glfwWindowIconifiedWayland(_GLFWwindow* window);

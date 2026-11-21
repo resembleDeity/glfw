@@ -536,6 +536,10 @@ struct _GLFWwindow
     // Window settings and state
     GLFWbool            resizable;
     GLFWbool            decorated;
+    // Per-window copy of the GLFW_TITLEBAR hint. The custom-frame message handlers run for the
+    // window's whole life, long after the global hint has been reset by the next window's
+    // glfwDefaultWindowHints, so they have to read this rather than _glfw.hints.window.titlebar.
+    GLFWbool            titlebar;
     GLFWbool            autoIconify;
     GLFWbool            floating;
     GLFWbool            focusOnShow;
@@ -586,6 +590,8 @@ struct _GLFWwindow
         GLFWcharfun               character;
         GLFWcharmodsfun           charmods;
         GLFWdropfun               drop;
+        GLFWdragdropfun           dragDrop;
+        GLFWdragendfun            dragEnd;
     } callbacks;
 
     // This is defined in platform.h
@@ -740,6 +746,12 @@ struct _GLFWplatform
     void (*requestWindowAttention)(_GLFWwindow*);
     void (*focusWindow)(_GLFWwindow*);
     void (*dragWindow)(_GLFWwindow*);
+    // Left null on platforms that don't need it -- see glfwStartDragDrop's own comment.
+    GLFWbool (*startDragDrop)(_GLFWwindow*,const char*);
+    // Left null on platforms that don't need it -- see glfwSetDragDropIcon's own comment.
+    GLFWbool (*setDragDropIcon)(_GLFWwindow*,const GLFWimage*,int,int);
+    // Left null on platforms that don't need it -- see glfwSetDragDropPayload's own comment.
+    GLFWbool (*setDragDropPayload)(_GLFWwindow*,const char*,const void*,size_t);
     void (*setWindowMonitor)(_GLFWwindow*,_GLFWmonitor*,int,int,int,int,int);
     GLFWbool (*windowFocused)(_GLFWwindow*);
     GLFWbool (*windowIconified)(_GLFWwindow*);
@@ -948,6 +960,8 @@ void _glfwInputMouseClick(_GLFWwindow* window, int button, int action, int mods)
 void _glfwInputCursorPos(_GLFWwindow* window, double xpos, double ypos);
 void _glfwInputCursorEnter(_GLFWwindow* window, GLFWbool entered);
 void _glfwInputDrop(_GLFWwindow* window, int count, const char** names);
+void _glfwInputDragDrop(_GLFWwindow* window, int phase, double xpos, double ypos, const char* type);
+void _glfwInputDragEnd(_GLFWwindow* window, int result);
 void _glfwInputJoystick(_GLFWjoystick* js, int event);
 void _glfwInputJoystickAxis(_GLFWjoystick* js, int axis, float value);
 void _glfwInputJoystickButton(_GLFWjoystick* js, int button, char value);
